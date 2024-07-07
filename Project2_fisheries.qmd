@@ -1,0 +1,620 @@
+---
+title: "DATA 110 - Project 2"
+author: "Su Thet Hninn"
+format: html
+editor: visual
+---
+
+# Fisheries Over-exploitation and Government Subsidies
+
+## Chapter 1 
+
+### Introduction
+
+![Source: https://www.sciencephoto.com/media/427634/view/fish-being-caught](images/Fish_caught.jpg){fig-align="center"}
+
+Fisheries over-exploitation is a significant environmental and economic issue worldwide. According to [FAO study]((Source:%20https://openknowledge.fao.org/server/api/core/bitstreams/9df19f53-b931-4d04-acd3-58a71c6b1a5b/content/sofia/2022/capture-fisheries-production.html)), the top 25 countries grappling with overexploitation of fish stocks have been identified. These countries, characterized by intensive fishing practices that exceed sustainable limits, serve as focal points for understanding the broader implications of our study's findings.
+
+### Objective of the Study
+
+At the World Trade Organization, there have been ongoing discussions regarding the regulation of fisheries subsidies. These discussions aim to address the adverse impacts of subsidies that contribute to overfishing and overcapacity, which can lead to the depletion of fish stocks and marine ecosystems. Despite extensive negotiations, no conclusive agreement has been reached, and many debates continue between the parties. This situation has sparked my interest to select this topic in exploring the relationship between capture fisheries production and government expenditure on transfers and local subsidies, with a focus on overexploitation in the top 25 countries identified by the FAO.
+
+### Data and Variable
+
+To analyze the relationship between capture fisheries production and government subsidies, I imported the World Bank's World Development Indicators (WDI) and other relevant data using the WDI package. The country-level dataset includes 15 variables, and the regional-level dataset comprises 3 variables. For my analysis, I am particularly interested in exploring the relationship between the following variables: - GDP per capita - Agriculture, forestry, and fishing value added - Capture fisheries production - Government expenditure on transfers and subsidies - Exports as a percentage of GDP - Longitude - Latitude - Economy - Income group - Fisheries capturing region
+
+## Chapter 2   
+
+### Data Importing and Cleaning Process
+
+Here are the steps I followed for dataset import: (1) Load the WDI library, (2) Create a list of indicators that I am interested in, (3) Create a list of world top 25 countries of fisheries overexploitation, (5) Create a dataset for latitude and longitude, (6) Create a dataset for 12 regions as fisheries capturing zones, (7) Combine the various datasets using iso3c code and countries' names, ensuring they are properly aligned and cleaned to create a comprehensive dataset for analysis.
+
+#### Data Import
+
+```{r message=FALSE, warning=FALSE}
+# Install WDI package and load the library
+# install.packages("WDI")
+library (WDI)
+library(tidyverse)
+library(countrycode)
+```
+
+```{r}
+# Create the interested indicator list
+indicator_list <- unique(c(
+  # GDP
+  "NY.GDP.PCAP.CD",    # GDP per capita (current US$)
+  "NV.AGR.TOTL.ZS",    # Agriculture, forestry, and fishing, value added (% of GDP)
+  "SP.POP.TOTL",       # Population total
+  # Fisheries
+  "ER.FSH.CAPT.MT",    # Capture fisheries production, metric tons
+  "ER.FSH.PROD.MT",    # Total fisheries production, metric tons
+  # Subsidies
+  "GC.XPN.TRFT.CN",    # Government expenditure on transfers and subsidies, current LCU
+  # Trade
+  "NE.EXP.GNFS.ZS"     # Exports of goods and services (% of GDP)
+))
+```
+
+```{r}
+# List the top 25 countries
+listed_country <- c(
+  "China", "Indonesia", "Peru", "Russian Federation", "United States", "India", "Viet Nam", "Japan", "Norway", "Chile", "Philippines","Thailand", "Malaysia", "Korea", "Morocco", "Mexico","Iceland", "Myanmar", "Argentina", "Spain", "Oman", "Denmark", "Canada", "Iran, Islamic Rep.", "Bangladesh")
+
+iso3c_list <- countrycode(sourcevar = listed_country, origin = "country.name", destination = "iso3c")
+```
+
+```{r}
+# Fetch data for selected indicators
+wdi_data <- WDI(country = iso3c_list, 
+                indicator = indicator_list, 
+                start = 2010, end = 2020) 
+
+# Rename certain countries
+wdi_data$country[wdi_data$country == "Iran, Islamic Rep."] <- "Iran"
+wdi_data$country[wdi_data$country == "Korea, Rep."] <- "Korea"
+wdi_data$country[wdi_data$country == "Russian Federation"] <- "Russia"
+```
+
+#### Match with latitude and logitude data
+
+```{r message=FALSE, warning=FALSE}
+# Load the maps package
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+```
+
+```{r}
+# Get country data
+countries <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Extract country centroids (latitude and longitude)
+country_centroids <- st_centroid(countries)
+centroid_coords <- st_coordinates(country_centroids)
+
+# Add centroid coordinates to the country data
+countries$longitude <- centroid_coords[, 1]
+countries$latitude <- centroid_coords[, 2]
+```
+
+```{r}
+# Rename the variable
+countries <- countries %>%
+  rename(country = name_long)
+
+# Extract relevant columns (country name, longitude, latitude)
+country_lat_long <- countries[, c("country", "longitude", "latitude", "economy", "income_grp")]
+
+# Rename certain countries' names
+country_lat_long <- country_lat_long %>% 
+  mutate(country = case_when(
+    country == "Vietnam" ~ "Viet Nam",
+    country == "Republic of Korea" ~ "Korea",
+    country == "Russian Federation" ~ "Russia",
+    TRUE ~ country
+  ))
+```
+
+```{r}
+# Merge the two data frames by the 'country' column and rename the variables
+clean_wdi_25 <- merge(wdi_data, country_lat_long, by = "country") %>%
+  rename(
+    gdp_per_capita = NY.GDP.PCAP.CD,
+    agri_forestry_fishing_value_added = NV.AGR.TOTL.ZS,
+    population_total = SP.POP.TOTL,
+    capture_fisheries_production = ER.FSH.CAPT.MT,
+    total_fisheries_production = ER.FSH.PROD.MT,
+    government_expenditure_transfers_local = GC.XPN.TRFT.CN,
+    exports_percentage_gdp = NE.EXP.GNFS.ZS,
+    longitude = longitude,
+    latitude = latitude,
+    economy = economy,
+    income_group = income_grp
+  ) %>%
+  select(-geometry) %>%
+  arrange(country, year) %>%
+  mutate(income_group = case_when(
+    income_group == "1. High income: OECD" ~ "High Income: OECD",
+    income_group == "2. High income: nonOECD" ~ "High income: nonOECD",
+    income_group == "3. Upper middle income" ~ "Upper Middle Income",
+    income_group == "4. Lower middle income" ~ "Lower middle income",
+    income_group == "5. Low income" ~ "Low Income",
+    TRUE ~ income_group  # Keep other categories unchanged
+  ))
+```
+
+#### Creating the Regional Dataset
+
+```{r message=FALSE, warning=FALSE}
+library(readxl)
+# Correct the file path and include the file extension (.xlsx)
+fish_stocks_file <- "/Users/hlinethitzinwai/Documents/1 - College/DATA 110/Project_2/Fish Stock/fish-stocks.xlsx"
+fish_stocks <- read_excel(fish_stocks_file)
+```
+
+```{r}
+Regional <- fish_stocks %>%
+  filter(is.na(Code)) %>%
+  rename(region = Entity) %>%
+  mutate(region = case_when(
+    region == "Eastern Central Atlantic (FAO)" ~ "Eastern Central Atlantic",
+    region == "Eastern Central Pacific (FAO)" ~ "Eastern Central Pacific",
+    region == "Eastern Indian Ocean (FAO)" ~ "Eastern Indian Ocean",
+    region == "Mediterranean and Black Sea (FAO)" ~ "Mediterranean and Black Sea",
+    region == "Northeast Atlantic (FAO)" ~ "Northeast Atlantic",
+    region == "Northeast Pacific (FAO)" ~ "Northeast Pacific",
+    region == "Northwest Atlantic (FAO)" ~ "Northwest Atlantic",
+    region == "Northwest Pacific (FAO)" ~ "Northwest Pacific",
+    region == "Southeast Atlantic (FAO)" ~ "Southeast Atlantic",
+    region == "Southeast Pacific (FAO)" ~ "Southeast Pacific",
+    region == "Southwest Atlantic (FAO)" ~ "Southwest Atlantic",
+    region == "Southwest Pacific (FAO)" ~ "Southwest Pacific",
+    region == "Western Central Atlantic (FAO)" ~ "Western Central Atlantic",
+    region == "Western Central Pacific (FAO)" ~ "Western Central Pacific",
+    region == "Western Indian Ocean (FAO)" ~ "Western Indian Ocean",
+    TRUE ~ region
+  )) %>%
+  arrange(Year)
+```
+
+## Chapter 3 
+
+### Creating visualizations
+
+#### Visualization 1
+
+The first visualization depicts the ranking of the top 25 countries worldwide based on their fisheries capture volume from 2010 to 2020. The dataset spans a decade, and the total fisheries capture volume (in metric tons) is utilized to determine each country's rank. I use a bump chart as they can clearly show the relative ranking of items over time or across categories.
+
+```{r}
+# Make the alternative dataset with selected variables and make ranking
+rank_25 <- clean_wdi_25 %>%
+  select(year, country, capture_fisheries_production) %>%
+  rename("Year" = year, "Country" = country, "Capture_Fisheries_Production" = capture_fisheries_production) %>%
+  filter(!is.na(Capture_Fisheries_Production)) %>%  # Moved filter here
+  group_by(Year) %>%
+  mutate(Rank = rank(-Capture_Fisheries_Production, ties.method = "first")) %>%
+  ungroup()
+```
+
+```{r message=FALSE, warning=FALSE}
+library(ggbump)
+library(RColorBrewer)
+library(viridis)
+library(tidyverse)
+library(ggthemes)
+```
+
+```{r}
+# Generate a color palette with enough colors for all countries
+ocean_colors <- c(
+  "#145DA0", "#ff7f0e", "#77A290", "#C8DF59", "#F54D3D", 
+  "#5DF19D", "#e379c2", "#0A7029", "#61D04F", "#09BFFF",
+  "#aec7e8", "#4298A0", "#E69F00", "#AA1945", "#c5b0d5",
+  "red", "#938670", "#8c564b", "#FB6090", "#9edae5",
+  "#749EB2", "#9467bd", "grey", "#F0A160", "#0000FF","#a6761d"
+)
+```
+
+```{r message=FALSE, warning=FALSE}
+# Load necessary libraries
+library(plotly)
+
+# Create ggplot object
+capture_ranking <- ggplot(rank_25, aes(x = Year, y = Rank, color = Country)) +
+  geom_bump(size = 1.5) +
+  geom_point(size = 3) +
+  scale_y_reverse(breaks = 1:25) +  
+  scale_x_continuous(breaks = seq(min(rank_25$Year), max(rank_25$Year), by = 2)) +  
+  scale_color_manual(values = ocean_colors) +
+  labs(title = "Ranking of Total Capture Fisheries from 2010 to 2020",
+       x = "Year",
+       y = "Rank",
+       color = "Country") +
+  theme_classic() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 7),
+    legend.text = element_text(size = 7),
+    legend.key.size = unit(0.1, "cm"),
+    plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 7),
+    axis.text = element_text(size = 7),
+    panel.background = element_rect(fill = "white"),
+    panel.grid.major = element_line(color = "grey80"),
+    panel.grid.minor = element_line(color = "grey90"),
+    plot.background = element_rect(fill = "white")
+  ) 
+
+# Convert ggplot to plotly object for interactivity
+capture_ranking_plotly <- ggplotly(capture_ranking)
+
+# Add caption as an annotation
+capture_ranking_plotly <- capture_ranking_plotly %>%
+  layout(annotations = list(
+    x = 1.0,
+    y = -0.08,
+    text = "Data Source: World Development Indicator",
+    showarrow = FALSE,
+    xref = 'paper',
+    yref = 'paper',
+    xanchor = 'center',
+    yanchor = 'bottom',
+    font = list(size = 10)
+  ))
+
+# Display the interactive plot
+capture_ranking_plotly
+```
+
+From the visualization, we observe the ranking of countries in fisheries capture from 2010 to 2020. China consistently holds the top position throughout this period, demonstrating its dominance in global fisheries. Indonesia follows closely in second place, reflecting its significant contribution to the fisheries sector. The United States, India, and Peru frequently alternate between third, fourth, and fifth positions, indicating strong competition among these countries in fisheries capture. Peru, Russia, Japan, Norway, and Chile consistently maintain their rankings within the top ten, showcasing their well-established fisheries industries. Southeast Asian countries such as Viet Nam, the Philippines, Thailand, and Malaysia also feature prominently, highlighting the region's rich marine resources and reliance on fisheries. Notably, two least-developed countries (LDCs), Myanmar and Bangladesh, also make the list. This is particularly concerning from the perspective of overexploitation, as the high rankings of these countries in fisheries capture suggest they are contributing substantially to the pressure on global fish stocks.
+
+This visualization highlights the diversity of countries excelling in fisheries capture, spanning various regions and economic statuses. However, it also underscores a critical issue: the overexploitation of marine resources. The presence of both developed and least-developed countries in the top rankings suggests that overexploitation is a widespread issue, not confined to a specific region or economic group. It calls for urgent global cooperation and sustainable management practices to ensure the long-term health of our oceans and the communities that depend on them.
+
+#### Visualization 2
+
+The second visualization portrays the percentage of overexploited fisheries across various regional fishing areas from 2004 to 2019. These regions encompass significant maritime zones including the Eastern Central Atlantic, Eastern Central Pacific, Eastern Indian Ocean, Mediterranean and Black Sea, Northeast Atlantic, Northeast Pacific, Northwest Atlantic, Northwest Pacific, Southeast Atlantic, Southeast Pacific, Southwest Atlantic, Southwest Pacific, Western Central Atlantic, Western Central Pacific, and Western Indian Ocean. Highcharter was chosen for this visualization due to its capability to create interactive and dynamic charts that enhance user exploration and engagement with the data.
+
+```{r message=FALSE, warning=FALSE}
+library(highcharter)
+library(RColorBrewer)
+```
+
+```{r}
+# set color palette
+cols <- c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666",
+          "#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3", "#fdb462", "#b3de69")
+
+
+highchart() %>%
+  hc_add_series(data = Regional,
+                type = "area",
+                hcaes(x = Year,
+                      y = `Percentage of overexploited fish stocks`,
+                      group = region)) %>%
+  hc_colors(cols) %>%
+  hc_chart(style = list(fontFamily = "Avenir",
+                        fontWeight = "bold")) %>%
+  hc_plotOptions(series = list(stacking = "percent",
+                               marker = list(enabled = FALSE),  # Disable markers
+                               lineWidth = 0.5,
+                               lineColor = "white")) %>%
+  hc_xAxis(categories = unique(Regional$Year), tickInterval = 3) %>%
+  hc_yAxis(title = list(text = "Percentage of Overexploited Fish Stocks"),
+           labels = list(format = "{value}%"),
+           min = 0, max = 100) %>%  # Set the y-axis range from 0 to 100
+  hc_legend(align = "right", verticalAlign = "middle",
+            layout = "vertical",
+            symbolHeight = 8,
+            symbolWidth = 15,
+            symbolRadius = 0) %>%
+  hc_tooltip(shared = TRUE, valueSuffix = "%") %>%
+  hc_title(text = "Overexploited Fish Stocks by Region Over Time", align = "center") %>%
+  hc_caption(text = "Data Source: World Development Indicator", align = "right")
+
+```
+
+The visualization highlights several regions with consistently overexploited fisheries resources from 2010 to 2020. Notably, the Southeast Pacific, including Peru and Chile, along with the Northeast Pacific encompassing Russia, the United States (Alaska), and Mexico, have shown significant issues of overexploitation. In the Northwest Pacific, countries like China, Japan, and the Republic of Korea also face challenges in managing their fisheries sustainably. Countries in the Indian Ocean such as India, Bangladesh, Oman, and Iran, along with Southeast Asian nations like Indonesia, Viet Nam, Thailand, the Philippines, Myanmar, and Malaysia, contribute substantially to the observed trends of overexploitation. In the Northeast Atlantic and North Atlantic regions, Norway, Iceland, and Denmark are pivotal players in fisheries management, while in the Mediterranean and Black Sea, Morocco and Spain are notable contributors to these dynamics.
+
+## Chapter 4 
+
+### Statistical Analysis
+
+I am interested in the variables representing capture fisheries production and government expenditure for local transfers. Firstly, I will perform a correlation analysis to measure the strength and direction of the relationship between these two variables. Secondly, I will conduct a linear regression analysis to provide detailed information about the relationship, including how much capture_fisheries_production (y) changes when government_expenditure_transfers_local (x) changes.
+
+#### Correlation Analysis
+
+```{r}
+clean_wdi_na <- clean_wdi_25 %>%
+  filter(!is.na(government_expenditure_transfers_local),
+         !is.na(capture_fisheries_production),
+         !is.na(population_total),
+         !is.na(exports_percentage_gdp))
+
+# Calculate correlation matrix
+correlation_matrix <- cor(clean_wdi_na[c("capture_fisheries_production", "population_total", "government_expenditure_transfers_local", "exports_percentage_gdp")])
+
+# Print correlation matrix
+print(correlation_matrix)
+```
+
+The highlighted pairs of variables resulting from the correlation matrix are as follows:
+
+(a) capture_fisheries_production and population_total: The correlation coefficient is 0.473, indicating a moderate positive correlation. This suggests that as the capture fisheries production increases, there tends to be a tendency for population totals to also increase, though not extremely strongly.
+
+(b) capture_fisheries_production and government_expenditure_transfers_local: The correlation coefficient is 0.502, indicating a moderate positive correlation. This suggests that there is some degree of positive relationship between capture fisheries production and government expenditure on local transfers. As government expenditure on local transfers increases, capture fisheries production tends to increase as well.
+
+There is a statistically significant moderate positive correlation between capture_fisheries_production and government_expenditure_transfers_local. This suggests that as government expenditure transfers to local entities increase, capture fisheries production also tends to increase. The correlation coefficient of 0.5017 indicates that the relationship is neither weak nor strong, but it is notable and meaningful.
+
+The study by Soeparna and Taofiqurohman (2024) highlights a notable correlation between fishing subsidies and capture volumes, emphasizing their detrimental impact on marine resources, which aligns with the findings of my study.
+
+#### Linear Regression
+
+Based on the the linear regression model, the regression equation can be written as follows:
+
+capture_fisheries_production = β0 + β1 × government_expenditure_transfers_local + β2 × population_total + ϵ
+
+```{r}
+# Fit the linear model
+model <- lm(capture_fisheries_production ~ government_expenditure_transfers_local + population_total, data = clean_wdi_na)
+
+# Summarize the model
+summary(model)
+```
+
+The p-values for both government_expenditure_transfers_local and population_total are extremely small (\< 0.05), indicating strong evidence against the null hypothesis that their coefficients are zero. Therefore, both variables are statistically significant predictors of capture_fisheries_production. This value indicates that approximately 43.51% of the variability in capture_fisheries_production can be explained by government_expenditure_transfers_local and population_total together.
+
+The model provides a moderate fit to the data, explaining a significant portion of the variation in the dependent variable. Overall, the model suggests that both variables are important predictors of capture_fisheries_production. The model is statistically significant, indicating that changes in these variables are associated with changes in capture_fisheries_production, although other factors not included in the model may also influence this relationship.
+
+## Chapter 5 
+
+### Visualizations Using Statistics 
+
+#### Visualization 3
+
+Given my interest in the relationship between government expenditure on local subsidies and fisheries capture volume, I first created a scatter plot to visualize these two variables.
+
+```{r}
+# Create scatter plot with linear regression and confidence interval
+scatter_plot <- ggplot(clean_wdi_na, aes(x = government_expenditure_transfers_local, 
+                                         y = capture_fisheries_production, 
+                                         color = factor(income_group),
+                                         group = country)) +
+  geom_point(alpha = 0.7) +  # Adjust transparency
+  scale_color_brewer(palette = "Set1") +
+  scale_x_continuous(labels = scales::label_number(scale_cut = scales::cut_short_scale())) +  # Format x-axis numbers in thousands
+  scale_y_continuous(labels = scales::comma) +  # Format y-axis numbers with commas
+  labs(title = "Capture Fisheries Production vs Government Expenditure Transfers Local",
+       x = "Government Expenditure Transfers Local (in thousands)",
+       y = "Capture Fisheries Production (in MT)",
+       color = "Income Group") +
+  theme_dark() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 8),
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 6),
+    legend.position = "right",
+    legend.justification = "center"  # Center the legend horizontally
+  ) +
+  guides(color = guide_legend(nrow = length(unique(clean_wdi_na$income_group)), byrow = TRUE))  # Adjust number of rows
+
+# Add the linear regression line with confidence interval
+scatter_plot <- scatter_plot + 
+  geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "black", aes(group = 1))
+
+# Display the plot
+print(scatter_plot)
+```
+
+However, I found the government expenditures are heavily concentrated around 0, and it might indicate: the values could be very small relative to the other variable (capture fisheries production), and/or there could be a few outliers causing the plot to skew. My data has diversed economies and spans several orders of magnitude (e.g., from very small to very large values). I check the skewness of the data before transforming to logarithem form.
+
+```{r}
+# Import the 'moments' package for skewness calculation
+library(moments)
+
+# Extract the variables of interest
+expenditure <- clean_wdi_na$government_expenditure_transfers_local
+fisheries <- clean_wdi_na$capture_fisheries_production
+
+# Calculate skewness for both variables
+skew_expenditure <- skewness(expenditure)
+skew_fisheries <- skewness(fisheries)
+
+# Print the skewness values
+print(skew_expenditure)
+print(skew_fisheries)
+```
+
+I found both variables exhibit positive skewness, indicating that their distributions are skewed to the right with more values concentrated on the lower end and a tail extending towards higher values.
+
+Using a logarithmic scale might help visualize patterns more clearly. In addition, I normalized the variables by dividing the population to get per capita values. I follow these steps: Step 1: Calculate per capita values for both variables. Step 2: Transform them to their logarithmic values. Step 3: Create the linear plot and quadratic fit using the transformed variables.
+
+I also explored non-linear regression with a quadratic fit. This decision was driven by the recognition that a linear model might not adequately capture potential non-linear relationships in the data. By incorporating a quadratic term, I aimed to uncover more nuanced patterns that could better explain the variability observed in capture_fisheries_production.
+
+Before creating the plots, I created the new variables of per_capita value/volume for both variables, and the logarithm of existing variables by using the log () function.
+
+```{r}
+# Calculate per capita values
+clean_wdi_nv <- clean_wdi_na %>%
+  mutate(
+    government_expenditure_per_capita = government_expenditure_transfers_local / population_total,
+    capture_fisheries_production_per_capita = capture_fisheries_production / population_total
+  )
+```
+
+```{r}
+# Transform variables to their logarithmic values
+clean_wdi_nv <- clean_wdi_nv %>%
+  mutate(
+    log_government_expenditure_per_capita = log10(government_expenditure_per_capita),
+    log_capture_fisheries_production_per_capita = log10(capture_fisheries_production_per_capita)
+  )
+```
+
+#### Visualization 4
+
+```{r}
+library(ggpubr)
+library(tidyverse)
+```
+
+```{r}
+# Linear Regression
+plot_LRM <- ggplot(clean_wdi_nv, aes(x = log_government_expenditure_per_capita, 
+                              y = log_capture_fisheries_production_per_capita,
+                              color = income_group)) +
+  geom_point(alpha = 0.7) +  
+  geom_smooth(method = "lm", se = TRUE, color = "black", formula = y ~ x) +
+  labs(title = "Linear Relationship between Capture Fisheries and Government Expenditure",
+       x = "Government Expenditure Transfers Local per Capita",
+       y = "Capture Fisheries Production per Capita",
+       caption = "Source: World Development Indicator") +
+  theme_cleveland() +
+  theme(
+    plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 8),
+    axis.text = element_text(size = 6)
+  ) + 
+  scale_color_discrete(name = "Legend")
+
+# Display the plots
+plot_LRM
+```
+
+The above plot_LRM shows that the scattered dots and the sparse alignment with the regression line indicate that there is a weak linear relationship between government expenditure transfers and capture fisheries production per capita. The weak alignment with the regression line could imply that the true relationship between these variables might be non-linear. Given the scattered nature of the points, I tried to explore non-linear regression that can capture more complex relationships.
+
+#### Visualization 5
+
+```{r}
+# Quadratic Fit without log transformation
+plot_QF1 <- ggplot(clean_wdi_na, aes(x = government_expenditure_transfers_local, 
+                                     y = capture_fisheries_production,
+                                     color = income_group)) +
+  geom_point(alpha = 0.7) +  
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = TRUE, color = "blue") +
+  scale_x_continuous(labels = scales::comma_format(scale = 1e-3)) +  # Format x-axis numbers in thousands with commas
+  labs(title = "Quadratic Fit between Capture Fisheries and Government Expenditure",
+       x = "Government Expenditure Transfers Local (in thousands)",
+       y = "Capture Fisheries Production") +
+  theme_classic2() +
+  theme(
+    plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 8),
+    axis.text = element_text(size = 6),
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    legend.position = "right"
+  ) + 
+  scale_color_brewer(palette = "Dark2")
+
+# Quadratic Fit after log transformation
+plot_QF2 <- ggplot(clean_wdi_nv, aes(x = log_government_expenditure_per_capita, 
+                                     y = log_capture_fisheries_production_per_capita,
+                                     color = income_group)) +
+  geom_point(alpha = 0.7) +  
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = TRUE, color = "blue") +
+  labs(title = "Quadratic Fit after Log Transformation",
+       x = "Government Expenditure Transfers Local per Capita",
+       y = "Capture Fisheries Production per Capita",
+       caption = "Source: World Development Indicator") +
+  theme_classic2() +
+  theme(
+    plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 8),
+    axis.text = element_text(size = 6),
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    legend.position = "right",
+    plot.caption = element_text(size = 8, hjust = 1.5, margin = margin(t = 10))  
+  ) + 
+scale_color_brewer(palette = "Dark2")
+
+# Combine plots
+combined_plot <- ggarrange(plot_QF1, plot_QF2, ncol = 1, nrow = 2)
+
+# Display the plots
+print(combined_plot)
+```
+
+The difference in the distribution of dots around the quadratic fit line between the above non-log-transformed plot (QF1) and log-transformed (QF2) reflects how the logarithmic transformation alters the data distribution and potentially stabilizes the relationship between your variables. It highlights the impact of data transformation on model interpretation and the fitting process.
+
+A tighter clustering of points around the quadratic fit line after log transformation suggests that the quadratic model might better capture the underlying trend in the transformed data. This could imply a more stable relationship between government expenditure transfers and capture fisheries production when represented on a logarithmic scale.
+
+## Chapter 6 
+
+### Visualization using maps
+
+#### Visualization 6
+
+I have developed an interactive map showcasing the top 25 countries facing significant challenges with overexploitation in their fisheries.
+
+```{r}
+# Define income colors
+income_colors <- c(
+  "High Income: OECD" = "red", 
+  "High income: nonOECD" = "#ff7f0e",
+  "Upper Middle Income" = "blue", 
+  "Lower middle income" = "purple",
+  "Low Income" = "green"
+)
+
+# Function to map income group to color
+get_income_color <- function(income_group) {
+  if (income_group %in% names(income_colors)) {
+    return(income_colors[income_group])
+  } else {
+    return("black")  # default color if income group is not found
+  }
+}
+
+# Apply the color mapping to each row in the dataset
+clean_wdi_25$color <- sapply(clean_wdi_25$income_group, get_income_color)
+```
+
+```{r}
+# load the required library
+library(leaflet)
+library(scales) 
+
+# Create leaflet map
+map <- leaflet(clean_wdi_25) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    ~longitude, ~latitude,
+    popup = ~paste("<strong>Country:</strong> ", country, "<br>",
+                   "<strong>Income Group:</strong> ", income_group, "<br>"),
+    label = ~paste(country, "<br><strong>Income Group:</strong> ", income_group),
+    radius = 5,
+    color = ~color,  # Use the pre-computed color
+    fillOpacity = 0.8,
+    stroke = FALSE
+  ) %>%
+  addProviderTiles("Esri.WorldImagery") %>%
+  addLegend(
+    position = "bottomright",
+    colors = c("red", "#ff7f0e", "blue", "purple", "green"),
+    labels = c("High income: OECD", "High income: nonOECD", "Upper middle income", "Lower middle income", "Low income"),
+    opacity = 1
+  )
+
+# Display the map
+map
+```
+
+Each country on the map is color-coded to represent its income level, providing a visual representation of the economic context within which these fisheries operate. The colors used — red for high-income OECD countries, orange for high-income non-OECD countries, blue for upper-middle-income countries, purple for lower-income countries, and green for low income countries — help viewers quickly grasp the economic diversity of nations grappling with fisheries management issues. This interactive tool allows users to hover over each country to reveal its name and income group, facilitating a deeper understanding of how economic factors might influence fishing practices and sustainability efforts globally.
+
+### Conclusion
+
+According to World Rainforest Statistics, Indonesia ranks 2nd globally with 5,014 fish species, followed by Japan with 4,294 species and China with 3,838 species, showcasing their rich marine biodiversity. The Philippines and the United States also feature prominently, highlighting significant diversity in their coastal regions. However, these countries, along with India, Mexico, Vietnam, Thailand, and Malaysia, face increasing challenges from overexploitation of fish stocks. These insights underscore the urgent need for further analysis and conservation efforts. Moving forward, I am particularly intrigued by this topic and plan to explore it further. The visualizations created in this study, including the ranking of top 25 countries by fish species count, assessments of fish stocks under pressure by region, the relationship between subsidies and capture volume, and country-level maps of fisheries distribution, provide a robust foundation for future research into marine biodiversity conservation and sustainable fisheries management.
+
+### Bibliography
+
+Food and Agriculture Organization of the United Nations. (2022). Capture fisheries production. Retrieved from https://openknowledge.fao.org/server/api/core/bitstreams/9df19f53-b931-4d04-acd3-58a71c6b1a5b/content/sofia/2022/capture-fisheries-production.html
+
+Soeparna, I. I., & Taofiqurohman, A. (2024). Transversal policy between the protection of marine fishery resources and fisheries subsidies to address overfishing in Indonesia. Marine Policy, 163, 106112. https://doi.org/10.1016/j.marpol.2024.106112
+
+World Rainforests. Fish species counts. Retrieved July 7, 2024, from https://worldrainforests.com/03fish.htm
+
+World Trade Organization. Fish and fishery products - acceptances and notifications. Retrieved July 7, 2024, from https://www.wto.org/english/tratop_e/rulesneg_e/fish_e/fish_acceptances_e.htm
